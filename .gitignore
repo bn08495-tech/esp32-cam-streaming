@@ -1,0 +1,21 @@
+# Rust build artifacts
+rust/target/
+**/Cargo.lock
+
+# C++ build artifacts
+cpp/build/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# Simulator venv
+simulator/venv/
+__pycache__/
+*.pyc
+
+# IDE & OS files
+.DS_Store
+.vscode/
+.idea/
