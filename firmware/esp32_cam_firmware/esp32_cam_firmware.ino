@@ -86,15 +86,6 @@ void setup() {
     return;
   }
 
-  sensor_t * s = esp_camera_sensor_get();
-  if (s != NULL) {
-    s->set_brightness(s, 0);     // -2 to 2
-    s->set_contrast(s, 0);       // -2 to 2
-    s->set_saturation(s, 0);     // -2 to 2
-    s->set_vflip(s, 0);          // 0 = normal, 1 = flipped vertical
-    s->set_hmirror(s, 0);        // 0 = normal, 1 = mirrored horizontal
-  }
-
   // Connect to WiFi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
