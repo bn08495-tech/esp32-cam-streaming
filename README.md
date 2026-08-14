@@ -57,6 +57,6 @@ A high-performance, cross-platform video streaming, frame capture, and ESP32 har
 
 ### C++ App:
 ```bash
-/home/computer/esp32/cpp/build/esp32_cam_streamer <ESP32_IP>:81 /stream
+/home/computer/esp32/cpp/build/esp32_cam_streamer 192.168.1.105:81 /stream
 ```
 - Stream live video and press **`Ctrl + X`** in terminal anytime to capture snapshot images directly into `/home/computer/pictures/`!
