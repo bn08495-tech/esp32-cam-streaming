@@ -3,6 +3,7 @@
 #include "esp_camera.h"
 #include "img_converters.h"
 #include "Arduino.h"
+#include "camera_pins.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace; boundary=" PART_BOUNDARY;
@@ -11,6 +12,7 @@ static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
+static bool g_flash_state = false;
 
 // Stream handler serving real-time MJPEG video on /stream
 static esp_err_t stream_handler(httpd_req_t *req) {
@@ -90,9 +92,7 @@ static esp_err_t capture_handler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
-    size_t fb_len = 0;
     if (fb->format == PIXFORMAT_JPEG) {
-        fb_len = fb->len;
         res = httpd_resp_send(req, (const char *)fb->buf, fb->len);
     } else {
         uint8_t * buf = NULL;
@@ -108,6 +108,24 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 
     esp_camera_fb_return(fb);
     return res;
+}
+
+// Flash LED handler toggling GPIO 4 output on /flash
+static esp_err_t flash_handler(httpd_req_t *req) {
+#ifdef FLASH_LED_PIN
+    g_flash_state = !g_flash_state;
+    digitalWrite(FLASH_LED_PIN, g_flash_state ? HIGH : LOW);
+    Serial.printf("[+] Flash LED toggled: %s\n", g_flash_state ? "ON" : "OFF");
+
+    char json_response[64];
+    snprintf(json_response, sizeof(json_response), "{\"flash\": %d}", g_flash_state ? 1 : 0);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, json_response, strlen(json_response));
+#else
+    httpd_resp_set_status(req, "500 Internal Error");
+    return httpd_resp_send(req, "Flash pin not defined", HTTPD_RESP_USE_STRLEN);
+#endif
 }
 
 void startCameraServer() {
@@ -127,10 +145,18 @@ void startCameraServer() {
         .user_ctx  = NULL
     };
 
+    httpd_uri_t flash_uri = {
+        .uri       = "/flash",
+        .method    = HTTP_GET,
+        .handler   = flash_handler,
+        .user_ctx  = NULL
+    };
+
     Serial.printf("Starting web server on port: '%d'\n", config.server_port);
     if (httpd_start(&camera_httpd, &config) == ESP_OK) {
         httpd_register_uri_handler(camera_httpd, &capture_uri);
         httpd_register_uri_handler(camera_httpd, &stream_uri);
+        httpd_register_uri_handler(camera_httpd, &flash_uri);
     }
 
     config.server_port += 1; // Port 81 for dedicated streaming

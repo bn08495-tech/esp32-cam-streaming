@@ -1,18 +1,19 @@
 /*
  * ESP32-CAM MJPEG Video Streamer & Snapshot Firmware
- * Target Hardware: AI-Thinker ESP32-CAM (OV2640 Camera)
+ * Features:
+ *  1. Live MJPEG Streaming & Snapshot Server
+ *  2. Remote Flash LED Toggle Control (GPIO 4)
+ *  3. mDNS Auto-Discovery (http://esp32-cam.local)
+ *  4. ArduinoOTA Wireless Firmware Updates over WiFi
  *
- * Flashing Instructions:
- * 1. Open this folder in Arduino IDE or PlatformIO.
- * 2. Select Board: "AI Thinker ESP32-CAM"
- * 3. Select Partition Scheme: "Huge APP (3MB No OTA/1MB SPIFFS)"
- * 4. Enter your WiFi SSID and Password below.
- * 5. Connect FTDI Programmer (GND to IO0 for flashing).
- * 6. Upload sketch, remove IO0 jumper, press RESET button.
+ * Target Hardware: AI-Thinker ESP32-CAM (OV2640 Camera)
  */
 
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 // Select Camera Model
 #define CAMERA_MODEL_AI_THINKER // Standard AI-Thinker ESP32-CAM board
@@ -34,8 +35,14 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
   Serial.println("=========================================");
-  Serial.println("  ESP32-CAM MJPEG Streamer Firmware      ");
+  Serial.println("  ESP32-CAM MJPEG Streamer + OTA + mDNS  ");
   Serial.println("=========================================");
+
+  // Initialize Flash LED Pin
+  #ifdef FLASH_LED_PIN
+    pinMode(FLASH_LED_PIN, OUTPUT);
+    digitalWrite(FLASH_LED_PIN, LOW); // Start with Flash LED Off
+  #endif
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -100,21 +107,57 @@ void setup() {
   Serial.print("IP Address: http://");
   Serial.println(WiFi.localIP());
 
+  // Setup mDNS Auto-Discovery (http://esp32-cam.local)
+  if (MDNS.begin("esp32-cam")) {
+    Serial.println("[+] mDNS responder started: http://esp32-cam.local");
+  }
+
+  // Setup ArduinoOTA Wireless Firmware Flashing
+  ArduinoOTA.setHostname("esp32-cam");
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {
+      type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  ArduinoOTA.begin();
+  Serial.println("[+] Wireless OTA updates ready!");
+
   // Start MJPEG & Snapshot HTTP Server
   startCameraServer();
 
   Serial.println("\n---------------------------------------------------------");
-  Serial.print("📹 Stream URL   : http://");
+  Serial.print("📹 Stream URL    : http://");
   Serial.print(WiFi.localIP());
-  Serial.println(":81/stream  (or http://<IP>/stream)");
-  Serial.print("📸 Snapshot URL : http://");
+  Serial.println(":81/stream  (or http://esp32-cam.local:81/stream)");
+  Serial.print("📸 Snapshot URL  : http://");
   Serial.print(WiFi.localIP());
   Serial.println("/capture");
+  Serial.print("⚡ Flash Control : http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/flash");
   Serial.println("---------------------------------------------------------");
-  Serial.println("Ready to stream to Rust & C++ Desktop Apps!");
 }
 
 void loop() {
-  // Main server runs asynchronously in background tasks
-  delay(10000);
+  // Handle Wireless OTA Update requests
+  ArduinoOTA.handle();
+  delay(10);
 }

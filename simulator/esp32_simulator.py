@@ -2,7 +2,7 @@
 """
 ESP32-CAM MJPEG Stream Simulator Server
 Serves real-time MJPEG video stream on http://127.0.0.1:8080/stream
-mimicking an actual ESP32-CAM module.
+mimicking an actual ESP32-CAM module with mDNS, OTA, and Flash LED endpoints.
 """
 
 import sys
@@ -21,18 +21,23 @@ except ImportError as e:
     sys.exit(1)
 
 BOUNDARY = "123456789000000000000987654321"
+flash_led_state = False
 
 def generate_jpeg_frame(width=640, height=480, frame_count=0):
-    # Create image with dark gradient background
-    img = Image.new('RGB', (width, height), color=(18, 22, 32))
+    global flash_led_state
+    
+    # Background color turns brighter if Flash LED is ON
+    bg_color = (180, 180, 150) if flash_led_state else (18, 22, 32)
+    img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
 
     # Draw grid background
     grid_size = 40
+    grid_color = (200, 200, 170) if flash_led_state else (30, 40, 55)
     for x in range(0, width, grid_size):
-        draw.line([(x, 0), (x, height)], fill=(30, 40, 55), width=1)
+        draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
     for y in range(0, height, grid_size):
-        draw.line([(0, y), (width, y)], fill=(30, 40, 55), width=1)
+        draw.line([(0, y), (width, y)], fill=grid_color, width=1)
 
     # Bouncing sphere animation
     t = frame_count * 0.08
@@ -40,7 +45,6 @@ def generate_jpeg_frame(width=640, height=480, frame_count=0):
     cy = int(height / 2 + math.cos(t * 1.3) * 140)
     radius = 35 + int(math.sin(t * 2) * 10)
 
-    # Sphere with gradient glow effect
     for r in range(radius, 0, -3):
         color = (
             int(50 + math.sin(t) * 100 + r * 3) % 255,
@@ -55,11 +59,17 @@ def generate_jpeg_frame(width=640, height=480, frame_count=0):
 
     # Text overlays
     now_str = time.strftime("%Y-%m-%d %H:%M:%S") + f".{int(time.time() * 1000) % 1000:03d}"
-    draw.text((15, 15), "ESP32-CAM STREAM SIMULATOR", fill=(0, 225, 255))
+    draw.text((15, 15), "ESP32-CAM STREAM SIMULATOR (mDNS: esp32-cam.local)", fill=(0, 225, 255))
     draw.text((width - 230, 15), now_str, fill=(200, 220, 240))
 
+    # Flash LED indicator badge
+    flash_status_str = "⚡ FLASH: ON" if flash_led_state else "⚡ FLASH: OFF"
+    flash_color = (255, 220, 0) if flash_led_state else (120, 130, 140)
+    draw.rectangle([(width - 150, height - 32), (width - 15, height - 8)], fill=(30, 35, 45))
+    draw.text((width - 140, height - 25), flash_status_str, fill=flash_color)
+
     # Footer status bar
-    draw.rectangle([(0, height - 35), (width, height)], fill=(10, 14, 20))
+    draw.rectangle([(0, height - 35), (width - 160, height)], fill=(10, 14, 20))
     draw.text((15, height - 25), f"Frame: {frame_count:06d}  |  IP: 127.0.0.1  |  Res: {width}x{height}", fill=(160, 175, 195))
 
     # Convert to JPEG bytes
@@ -69,7 +79,6 @@ def generate_jpeg_frame(width=640, height=480, frame_count=0):
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Handle requests in a separate thread."""
     daemon_threads = True
 
 
@@ -81,6 +90,7 @@ class ESP32CamHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        global flash_led_state
         if self.path in ['/stream', '/stream:81', '/']:
             self.send_response(200)
             self.send_header('Content-Type', f'multipart/x-mixed-replace; boundary={BOUNDARY}')
@@ -102,6 +112,15 @@ class ESP32CamHandler(BaseHTTPRequestHandler):
                     time.sleep(0.04)  # ~25 FPS
             except Exception:
                 pass
+        elif self.path.startswith('/flash'):
+            flash_led_state = not flash_led_state
+            resp = f'{{"flash": {1 if flash_led_state else 0}}}'.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Length', str(len(resp)))
+            self.end_headers()
+            self.wfile.write(resp)
         elif self.path in ['/snapshot', '/capture', '/jpg']:
             frame_data = generate_jpeg_frame(640, 480, 0)
             self.send_response(200)

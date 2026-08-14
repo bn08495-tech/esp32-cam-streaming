@@ -9,6 +9,8 @@
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 #include "mjpeg_client.hpp"
 
@@ -17,7 +19,6 @@
 
 namespace fs = std::filesystem;
 
-// Non-blocking terminal keyboard reading on Linux / POSIX
 class RawTerminal {
 public:
     RawTerminal() {
@@ -83,6 +84,36 @@ bool save_snapshot(const std::vector<uint8_t>& jpeg_data, std::string& saved_pat
     return true;
 }
 
+void toggle_remote_flash(const std::string& host_target) {
+    std::string host = host_target;
+    size_t colon_pos = host.find(':');
+    if (colon_pos != std::string::npos) {
+        host = host.substr(0, colon_pos);
+    }
+    size_t prefix_pos = host.find("://");
+    if (prefix_pos != std::string::npos) {
+        host = host.substr(prefix_pos + 3);
+    }
+
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host.c_str(), "80", &hints, &res) == 0 && res) {
+        int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (sock >= 0) {
+            struct timeval tv{1, 0};
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            if (connect(sock, res->ai_addr, res->ai_addrlen) == 0) {
+                std::string req = "GET /flash HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
+                send(sock, req.c_str(), req.size(), 0);
+            }
+            close(sock);
+        }
+        freeaddrinfo(res);
+    }
+}
+
 int main(int argc, char** argv) {
     std::string target_ip = "127.0.0.1:8080";
     std::string stream_path = "/stream";
@@ -95,13 +126,15 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "========================================================\n";
-    std::cout << "       ESP32-CAM C++ Streamer & Capture Tool           \n";
+    std::cout << "  ESP32-CAM C++ Streamer (mDNS / OTA / Flash Control)   \n";
     std::cout << "========================================================\n";
     std::cout << "[+] Target IP / Host : " << target_ip << "\n";
     std::cout << "[+] Stream Path     : " << stream_path << "\n";
-    std::cout << "[+] Snapshot Directory: /home/computer/pictures\n";
-    std::cout << "[+] Shortcut        : Press Ctrl + X to capture snapshot\n";
-    std::cout << "[+] Exit            : Press 'q' or Ctrl + C\n";
+    std::cout << "[+] mDNS Address    : http://esp32-cam.local:81/stream\n";
+    std::cout << "[+] Snapshot Dir    : /home/computer/pictures\n";
+    std::cout << "[+] Controls        : Press [Ctrl+X] to Capture Snapshot\n";
+    std::cout << "                    : Press 'f' to Toggle Flash LED\n";
+    std::cout << "                    : Press 'q' to Quit\n";
     std::cout << "--------------------------------------------------------\n";
 
     MjpegClient client;
@@ -132,6 +165,9 @@ int main(int argc, char** argv) {
                 } else {
                     std::cout << "\n[⚠️ WARNING] No frame available to capture yet.\n" << std::flush;
                 }
+            } else if (key == 'f' || key == 'F') {
+                std::cout << "\n[⚡ FLASH LED] Sending toggle command...\n" << std::flush;
+                toggle_remote_flash(target_ip);
             } else if (key == 'q' || key == 'Q' || key == 3) { // 'q' or Ctrl+C
                 std::cout << "\n[-] Exiting streamer...\n";
                 break;
@@ -146,7 +182,7 @@ int main(int argc, char** argv) {
             if (elapsed >= 2.0) {
                 double fps = frame_count / elapsed;
                 std::cout << "\r[+] Streaming Live | FPS: " << std::fixed << std::setprecision(1) << fps
-                          << " | Frames Received: " << frame_count << " | Press [Ctrl+X] to Capture" << std::flush;
+                          << " | Frames Received: " << frame_count << " | [Ctrl+X]: Snapshot | 'f': Flash" << std::flush;
                 frame_count = 0;
                 last_fps_time = now;
             }
